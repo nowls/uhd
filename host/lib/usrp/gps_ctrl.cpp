@@ -98,6 +98,7 @@ public:
     std::vector<std::string> ret = boost::assign::list_of
         ("gps_gpgga")
         ("gps_gprmc")
+        ("gps_gpgga_and_gprmc")
         ("gps_time")
         ("gps_locked");
     return ret;
@@ -110,6 +111,9 @@ public:
                  boost::to_upper_copy(key),
                  get_nmea(boost::to_upper_copy(key.substr(4,8))),
                  "");
+    }
+    else if(key == "gps_gpgga_and_gprmc") {
+        return sensor_value_t("", get_gpgga_and_gprmc(), "");
     }
     else if(key == "gps_time") {
         return sensor_value_t("GPS epoch time", int(get_epoch_time()), "seconds");
@@ -159,6 +163,47 @@ private:
         boost::this_thread::sleep(milliseconds(GPS_TIMEOUT_DELAY_MS));
     }
     throw uhd::value_error(str(boost::format("get_nmea(): no %s message found") % msgtype));
+    return std::string();
+  }
+
+  //retrieve GPGGA and GPRMC raw NMEA sentences
+  std::string get_gpgga_and_gprmc() {
+    std::string gpgga_msg("$GPGGA");
+    std::string gprmc_msg("$GPRMC");
+    std::string temp, msg1, msg2;
+    if(not gps_detected()) {
+        UHD_MSG(error) << "get_gpgga_and_gprmc(): unsupported GPS or no GPS detected";
+        return std::string();
+    }
+
+    _flush(); //flush all input before waiting for a message
+
+    bool found_gpgga = false;
+    bool found_gprmc = false;
+    const boost::system_time comm_timeout = boost::get_system_time() + milliseconds(GPS_COMM_TIMEOUT_MS);
+    while(boost::get_system_time() < comm_timeout) {
+        temp = _recv();
+        //if(not found_gpgga and temp.substr(0, 6) == gpgga_msg) {
+        if(temp.substr(0, 6) == gpgga_msg) {
+            found_gpgga = true;
+            msg1 = temp.substr(0,temp.length()-1);
+            msg1 += "\n";
+        }
+        //if(not found_gprmc and temp.substr(0, 6) == gprmc_msg) {
+        else if(temp.substr(0, 6) == gprmc_msg) {
+            found_gprmc = true;
+            msg2 = temp.substr(0,temp.length()-1);
+            msg2 += "\n";
+        }
+        if (found_gpgga and found_gprmc)
+            return msg1 + msg2;
+        boost::this_thread::sleep(milliseconds(GPS_TIMEOUT_DELAY_MS/4));
+    }
+    if (found_gprmc and not found_gpgga)
+        throw uhd::value_error("get_gpgga_and_gprmc(): no GPGGA message found");
+    if (found_gpgga and not found_gprmc)
+        throw uhd::value_error("get_gpgga_and_gprmc(): no GPRMC message found");
+    throw uhd::value_error("get_gpgga_and_gprmc(): no NMEA message found");
     return std::string();
   }
 
